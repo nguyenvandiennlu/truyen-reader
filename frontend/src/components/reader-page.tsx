@@ -414,6 +414,39 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
     playParagraph(Math.max(0, (currentParagraph ?? 1) - 1))
   }
 
+  // ⌨️ Phím tắt máy tính Windows: Space = Play/Pause, Mũi tên Phải = Đoạn sau, Mũi tên Trái = Đoạn trước
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.tagName === "SELECT") {
+        return
+      }
+
+      if (e.code === "Space") {
+        e.preventDefault()
+        togglePlay()
+      } else if (e.code === "ArrowRight") {
+        e.preventDefault()
+        nextParagraph()
+      } else if (e.code === "ArrowLeft") {
+        e.preventDefault()
+        prevParagraph()
+      }
+    }
+
+    // Lắng nghe lệnh Media từ Electron (tai nghe Bluetooth / bàn phím máy tính)
+    if (typeof window !== "undefined" && (window as any).electronAPI?.onMediaCommand) {
+      (window as any).electronAPI.onMediaCommand((cmd: string) => {
+        if (cmd === "toggle-play") togglePlay()
+        else if (cmd === "next-paragraph") nextParagraph()
+        else if (cmd === "prev-paragraph") prevParagraph()
+      })
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => window.removeEventListener("keydown", handleKeyDown)
+  }, [togglePlay, nextParagraph, prevParagraph])
+
   // Hàm render nội dung đoạn văn kèm Highlight chữ vàng theo giọng đọc (Karaoke Word Highlight)
   const renderParagraphContent = (text: string, isCurrent: boolean) => {
     if (!isCurrent || currentWords.length === 0) {
