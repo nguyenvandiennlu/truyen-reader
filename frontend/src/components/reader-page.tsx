@@ -68,6 +68,14 @@ function cleanVietnamese(text: string): string {
   return s
 }
 
+const DEFAULT_PROD_URL = "https://truyen-reader-dtc9.onrender.com"
+const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined" && !window.location.hostname.includes("localhost")
+    ? DEFAULT_PROD_URL
+    : "")
+).replace(/\/$/, "")
+
 // Singleton Audio duy nhất trên toàn trình duyệt để triệt tiêu vĩnh viễn lỗi 2 giọng đọc song song
 let globalAudio: HTMLAudioElement | null = null
 
@@ -131,7 +139,7 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
     const textToRead = paragraphs[idx]
 
     try {
-      const res = await fetch("/api/audio/synthesize", {
+      const res = await fetch(`${API_BASE}/api/audio/synthesize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: textToRead, voice: v, rate: r })
@@ -222,7 +230,7 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
     setProgress(0)
     stopAudio()
 
-    fetch(`/api/truyen/${storyId}/chuong/${chapterNo}?t=${Date.now()}`, {
+    fetch(`${API_BASE}/api/truyen/${storyId}/chuong/${chapterNo}?t=${Date.now()}`, {
       signal: controller.signal,
       cache: "no-store",
       headers: { "Cache-Control": "no-cache" }
@@ -283,6 +291,7 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
 
     // Triệt tiêu ngay lập tức bất kỳ âm thanh nào đang phát dở
     stopGlobalAudio()
+    const audio = getGlobalAudio()
 
     // Cuộn mượt đến đoạn đang đọc
     const el = document.getElementById(`p${index}`)
@@ -305,6 +314,11 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
     let payload = synthCacheRef.current.get(index)
     if (!payload) {
       setIsBuffering(true)
+      // Mở khoá Audio Context của trình duyệt trước khi chờ mạng bất đồng bộ
+      try {
+        audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA="
+        audio.play().catch(() => {})
+      } catch {}
       payload = (await prefetchAudio(index)) || undefined
       // Nếu người dùng đã bấm đoạn khác hoặc chuyển chương trong lúc đợi tải -> Huỷ bỏ
       if (activePlayIdRef.current !== playId) return
@@ -313,7 +327,6 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
     if (activePlayIdRef.current !== playId) return
     setIsBuffering(false)
 
-    const audio = getGlobalAudio()
     audio.pause()
     audio.onended = null
     audio.onerror = null
@@ -324,7 +337,7 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
       currentWordsRef.current = payload.words || []
     } else {
       const text = paragraphs[index]
-      audio.src = `/api/audio/stream?text=${encodeURIComponent(text)}&voice=${voice}&rate=${encodeURIComponent(rate)}`
+      audio.src = `${API_BASE}/api/audio/stream?text=${encodeURIComponent(text)}&voice=${voice}&rate=${encodeURIComponent(rate)}`
       setCurrentWords([])
       currentWordsRef.current = []
     }
@@ -337,16 +350,20 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
       }
     }
 
-    audio.onerror = () => {
+    // NẾU LỖI: Dừng lại, KHÔNG tự ý nhảy đoạn liên tiếp
+    audio.onerror = (e) => {
+      console.warn("Audio error on paragraph", index, e)
       setIsBuffering(false)
-      setTimeout(() => {
-        if (activePlayIdRef.current === playId) {
-          playParagraph(index + 1)
-        }
-      }, 500)
+      setIsPlaying(false)
+      setActiveWordIndex(-1)
     }
 
-    audio.play().catch(() => {})
+    audio.play().catch((err) => {
+      console.warn("Audio play blocked by browser:", err)
+      setIsBuffering(false)
+      setIsPlaying(false)
+      setActiveWordIndex(-1)
+    })
   }
 
   const togglePlay = () => {
@@ -496,7 +513,23 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
 
       <article className="mx-auto max-w-3xl px-5 pb-16 sm:px-8">
         {error ? (
-          <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>
+          <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-6 text-center my-12 max-w-lg mx-auto">
+            <p className="text-base font-semibold text-destructive mb-2">{error}</p>
+            <p className="text-xs text-muted-foreground mb-4 leading-relaxed">
+              Dữ liệu trên Supabase vẫn an toàn 100%. Máy chủ đám mây (Render Free) có thể mất 20–30 giây để thức giấc sau 15 phút nghỉ.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setError("")
+                window.location.reload()
+              }}
+              className="gap-2"
+            >
+              🔄 Bấm vào đây để tải lại chương
+            </Button>
+          </div>
         ) : chapter ? (
           <>
             <header className="mb-8 text-center sm:mb-10">

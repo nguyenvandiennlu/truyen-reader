@@ -1,5 +1,11 @@
-// API helper — gọi backend qua proxy /api
-const API_BASE = "/api";
+// API helper — tự động gọi thẳng Render trên production hoặc localhost khi phát triển
+const DEFAULT_PROD_URL = "https://truyen-reader-dtc9.onrender.com";
+const API_BASE = (
+  process.env.NEXT_PUBLIC_API_URL ||
+  (typeof window !== "undefined" && !window.location.hostname.includes("localhost")
+    ? DEFAULT_PROD_URL
+    : "")
+).replace(/\/$/, "") + "/api";
 
 // ---------- TypeScript types ----------
 

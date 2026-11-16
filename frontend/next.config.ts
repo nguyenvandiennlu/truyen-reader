@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
-const BACKEND_URL = (process.env.BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080").replace(/\/$/, "");
+const BACKEND_URL = (
+  process.env.BACKEND_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  (process.env.NODE_ENV === "production" ? "https://truyen-reader-dtc9.onrender.com" : "http://localhost:8080")
+).replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
   turbopack: {
