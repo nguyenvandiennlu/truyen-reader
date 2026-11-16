@@ -124,41 +124,55 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
   const currentWordsRef = useRef<WordTimestamp[]>([])
 
   const synthCacheRef = useRef<Map<number, AudioPayload>>(new Map())
-  const prefetchingRef = useRef<Set<number>>(new Set())
+  const prefetchPromisesRef = useRef<Map<number, Promise<AudioPayload | null>>>(new Map())
   const activePlayIdRef = useRef<number>(0)
 
   // Tải trước (prefetch) âm thanh + mốc thời gian từng từ vào RAM
-  const prefetchAudio = useCallback(async (idx: number, v = voice, r = rate): Promise<AudioPayload | null> => {
-    if (idx < 0 || idx >= paragraphs.length) return null
+  const prefetchAudio = useCallback((idx: number, v = voice, r = rate): Promise<AudioPayload | null> => {
+    if (idx < 0 || idx >= paragraphs.length) return Promise.resolve(null)
     if (synthCacheRef.current.has(idx)) {
-      return synthCacheRef.current.get(idx)!
+      return Promise.resolve(synthCacheRef.current.get(idx)!)
     }
-    if (prefetchingRef.current.has(idx)) return null
+    // Nếu đoạn này đang được tải ngầm, tái sử dụng Promise để các tác vụ cùng đợi
+    if (prefetchPromisesRef.current.has(idx)) {
+      return prefetchPromisesRef.current.get(idx)!
+    }
 
-    prefetchingRef.current.add(idx)
     const textToRead = paragraphs[idx]
+    const promise = (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/audio/synthesize`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: textToRead, voice: v, rate: r })
+        })
+        if (!res.ok) throw new Error("Audio synth failed")
+        const data = (await res.json()) as AudioPayload
+        synthCacheRef.current.set(idx, data)
+        return data
+      } catch {
+        return null
+      } finally {
+        prefetchPromisesRef.current.delete(idx)
+      }
+    })()
 
-    try {
-      const res = await fetch(`${API_BASE}/api/audio/synthesize`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: textToRead, voice: v, rate: r })
-      })
-      if (!res.ok) throw new Error("Audio synth failed")
-      const data = (await res.json()) as AudioPayload
-      synthCacheRef.current.set(idx, data)
-      return data
-    } catch {
-      return null
-    } finally {
-      prefetchingRef.current.delete(idx)
-    }
+    prefetchPromisesRef.current.set(idx, promise)
+    return promise
   }, [paragraphs, voice, rate])
+
+  // Tự động tải trước 2 đoạn đầu tiên ngay khi mở chương để bấm Play là phát tức thì 0s
+  useEffect(() => {
+    if (paragraphs.length > 0) {
+      prefetchAudio(0)
+      if (paragraphs.length > 1) prefetchAudio(1)
+    }
+  }, [paragraphs, prefetchAudio])
 
   // Dọn dẹp cache khi đổi giọng hoặc đổi tốc độ
   const clearAudioCache = () => {
     synthCacheRef.current.clear()
-    prefetchingRef.current.clear()
+    prefetchPromisesRef.current.clear()
     setCurrentWords([])
     currentWordsRef.current = []
     setActiveWordIndex(-1)
@@ -299,10 +313,11 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
       el.scrollIntoView({ behavior: "smooth", block: "center" })
     }
 
-    // ⚡ TẢI TRƯỚC 3 ĐOẠN TIẾP THEO VÀO BỘ NHỚ RAM NGAY BÂY GIỜ
+    // ⚡ TẢI TRƯỚC 4 ĐOẠN TIẾP THEO VÀO BỘ NHỚ RAM NGAY BÂY GIỜ
     prefetchAudio(index + 1)
     prefetchAudio(index + 2)
     prefetchAudio(index + 3)
+    prefetchAudio(index + 4)
 
     // Dọn dẹp bớt các payload cũ để giải phóng RAM
     if (index > 5) {
@@ -619,7 +634,10 @@ export default function ReaderPage({ storyId, chapterNo }: ReaderPageProps) {
 
               <div className="ml-1 text-xs font-medium text-muted-foreground min-w-[70px]">
                 {currentParagraph !== null ? (
-                  <span>Đoạn {currentParagraph + 1}/{paragraphs.length}</span>
+                  <span className="flex items-center gap-1.5">
+                    <span>Đoạn {currentParagraph + 1}/{paragraphs.length}</span>
+                    {isBuffering && <span className="text-[11px] text-amber-500 font-semibold animate-pulse">(Đang tải...)</span>}
+                  </span>
                 ) : (
                   <span>Sẵn sàng</span>
                 )}
